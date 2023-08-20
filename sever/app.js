@@ -98,7 +98,7 @@ function playRound(currentPlayerIndex) {
 }
 
 // 開始拍賣
-function startAuction(initiator) {
+function startAuction(initiator) {   //傳入拍賣主
   if (!currentAuction && auctionStack.length > 0) {
     currentAuction = auctionStack.pop();  // 將第一張動物卡翻開，作為目前的拍賣
     currentAuction.initiator = initiator;  // 將拍賣主資訊存入 currentAuction
@@ -112,12 +112,12 @@ function startAuction(initiator) {
 
     //倒數
     let countdownTimeout = null;
-    let countdownValue = 3; // 倒數秒數，可依需求調整
+    let countdownValue = 15; // 倒數秒數，可依需求調整
 
-    socket.on('bid', (bidAmount) => {  //出價
-      if (currentAuction && bidAmount > currentAuction.currentBid &&  //有拍賣且金額更大
+    socket.on('bid', (bidMoney) => {  //出價
+      if (currentAuction && bidMoney > currentAuction.currentBid &&  //有拍賣且金額更大
           currentAuction.initiator !== socket.id) {  //且出價者不等於拍賣主
-        currentAuction.currentBid = bidAmount;  //更新金額
+        currentAuction.currentBid = bidMoney;  //更新金額
         currentAuction.currentBidder = socket.id;  //更新出價者
         io.emit('update-auction', currentAuction);  //發給所有人
 
@@ -133,14 +133,14 @@ function startAuction(initiator) {
     // 開始倒數
     function startCountdown() {
       countdownTimeout = setInterval(() => { //每隔一秒就呼叫一次
-        if (countdownValue > 0) {
+        if (countdownValue > 0) {  //倒數中
           io.emit('auction-countdown', countdownValue);  // 告訴所有玩家目前的倒數秒數
-          countdownValue--;
-        } else {
+          countdownValue--;  //倒數
+        } else {  //倒數結束
           clearInterval(countdownTimeout);  //停止呼叫
           io.emit('auction-countdown-end');  //告訴所有人倒數結束
 
-          // 當倒數結束，沒有人喊價時
+          //最高金額及出價者
           const highestBid = currentAuction.currentBid;
           const highestBidder = players.find(player => player.id === currentAuction.currentBidder);
           // 傳送最高出價者及金額的資訊給拍賣主
@@ -149,21 +149,49 @@ function startAuction(initiator) {
             bidAmount: highestBid  //出價金額(可為0元)
           });
 
-          //等待拍賣主決定是否自己買下
+          // 等待拍賣主決定是否自己買下 answer{moneyCard:[],isBuy:""}
           socket.on('buy-myself', (answer) => {
-            if (answer == "buy") {
-              // 賣給拍賣主，更新遊戲狀態、玩家金錢等
-              // 你需要根據你的遊戲邏輯來處理這部分
-            } else {
-              // 拍賣主決定不買，則最高出價者得標
-              // 你需要根據你的遊戲邏輯來處理這部分
+            if (currentAuction && currentAuction.initiator.id === socket.id) {
+              const animalCard = currentAuction.animalCard;
+              const price = currentAuction.currentBid;
+
+              if (answer.isBuy === 'buy') {
+                
+                // 拍賣主選擇自己買下，更新遊戲狀態、玩家金錢等
+                const initiator = players.find(player => player.id === socket.id);
+                if (initiator && initiator.money[0] >= price) {
+                  // 扣除拍賣主金錢
+                  initiator.money = removeBfromA(initiator.money,answer.moneyCard);
+                  // initiator.money -= price;
+                  // 將動物卡加入拍賣主的動物卡列表 
+                  initiator.cards.push(animalCard);
+                }
+              } else {// 拍賣主決定不買，則最高出價者得標
+                // 告訴出價者拍賣主決定不買
+                io.to(highestBidder.id).emit('initiator-not-buy-it', {
+                  bidder: highestBidder, //出價者(可能沒有)
+                  bidAmount: highestBid  //出價金額(可為0元)
+                });
+                //等待出價者回傳的金錢卡訊息 
+                socket.on('pay-money',(BidderMoneyCards) => {
+                  // 確認金錢正確
+                  if(BidderMoneyCards.sum() >= highestBid){
+                    // 更新玩家資訊
+                    highestBidder.money = removeBfromA(highestBidder.money,BidderAnswer.moneyCard);
+                    highestBidder.cards.push(animalCard);
+                    // 將錢交給拍賣主
+                  }
+                });
+              }
+              // 將更新後的玩家資訊發送給所有玩家
+              io.emit('player-list', players);
+              // 告訴所有玩家拍賣結束
+              io.emit('end-auction');
             }
           });
-
           // 結束拍賣，重置拍賣相關狀態
           currentAuction = null;
           io.emit('end-auction');
-          
         }
       }, 1000);
     }
@@ -204,3 +232,54 @@ function startAuction(initiator) {
 //     io.to(trade.targetPlayer.id).emit('receive-counter-bid', trade);
 //   }
 // });
+
+// function removeArr2fromArr1(array1,array2){
+//   let arrayResult = array1
+//   for(let element in array2){
+//     console.log(element);
+//     arrayResult.remove(element);
+//   }
+//   return arrayResult;
+// }
+
+// // Array.prototype.removeElements = function(elements) {  //移除陣列中多個元素
+// //   for(let element in elements){
+// //     this.remove(element);
+// //   }
+// // }
+
+// Array.prototype.remove = function(value) {  //移除陣列中一個元素
+//   this.splice(this.indexOf(value), 1);
+// }
+
+function removeBfromA(arr1, arr2) {
+  // 創建一個新的數組來存儲結果
+  let result = [];
+  // 遍歷第一個數組
+  for (let i = 0; i < arr1.length; i++) {
+    // 獲取當前元素
+    let element = arr1[i];
+    // 檢查它是否在第二個數組中
+    let index = arr2.indexOf(element);
+    // 如果在，就移除它
+    if (index > -1) {
+      arr1.splice(i, 1); // 從第一個數組中移除
+      arr2.splice(index, 1); // 從第二個數組中移除
+      i--; // 調整索引
+    } else {
+      // 如果不在，就添加到結果中
+      result.push(element);
+    }
+  }
+  // 返回結果
+  return result;
+}
+
+
+Array.prototype.sum = function () {  //回傳array總和
+  let sum = 0;
+  this.forEach( num => {
+    sum += num;
+  })
+  return sum;
+}
